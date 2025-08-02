@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://api.memory.mts.ru/api/1.0/preview/content/3d78d69c-1b85-428f-a03d-25b6bdb661cd?type=image&height=1024" alt="Логотип ChronosPower" width="250"/>
+  <img src="https://raw.githubusercontent.com/Fedoroks2024/ChronosPower/f4342e6c5ddaaf2a6272a79f37b52ad07f554f73/ChronosPower.svg" alt="Логотип ChronosPower" width="250"/>
 </p>
 # ChronosPower: Универсальный Фреймворк Управления Питанием
 
