@@ -1,10 +1,12 @@
 #ifndef CHRONOS_POWER_H
 #define CHRONOS_POWER_H
+
 #if defined(ARDUINO) && ARDUINO >= 100
 #include "Arduino.h"
 #else
 #include "WProgram.h"
 #endif
+
 #if defined(__AVR__)
 #include <avr/io.h>
 #include <avr/power.h>
@@ -13,21 +15,12 @@
 #include <avr/interrupt.h>
 #elif defined(ESP32)
 #include <esp_sleep.h>
-#include <driver/rtc_io.h>
-#include <soc/rtc_cntl_reg.h>
-#include <soc/soc.h>
-#include <esp_bt.h>
-#elif defined(ESP8266)
-extern "C" {
-#include "user_interface.h"
-}
-#elif defined(ARDUINO_ARCH_STM32)
-#include <libmaple/pwr.h>
-#include <libmaple/rcc.h>
-#include <RTClock.h>
-#elif defined(ARDUINO_ARCH_SAMD)
-#include <RTCZero.h>
-#include <samd.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_wifi.h"
+#include "esp_bt.h"
+#include "driver/rtc_io.hh"
+#include "soc/rtc.h"
 #elif defined(ARDUINO_ARCH_RP2040)
 #include <hardware/pll.h>
 #include <hardware/clocks.h>
@@ -35,10 +28,6 @@ extern "C" {
 #include <hardware/watchdog.h>
 #include <hardware/rtc.h>
 #include <hardware/adc.h>
-#elif defined(TEENSYDUINO)
-#include <kinetis.h>
-#elif defined(__IMXRT1062__)
-#include "imxrt.h"
 #endif
 
 namespace ChronosPower {
@@ -68,27 +57,24 @@ enum class Status : int16_t {
     FAILURE_PERIPHERAL_NOT_FOUND = -21,
     FAILURE_PRECISION_UNATTAINABLE = -22,
     FAILURE_REGISTER_WRITE_PROTECTED = -23,
-    FAILURE_SYSTEM_STATE_INVALID = -24
-};
-
-enum class SystemClockSource : uint8_t {
-    INTERNAL_RC_SLOW,
-    INTERNAL_RC_FAST,
-    EXTERNAL_CRYSTAL,
-    EXTERNAL_BYPASS,
-    PLL_INTERNAL,
-    PLL_EXTERNAL
+    FAILURE_SYSTEM_STATE_INVALID = -24,
+    FAILURE_INSUFFICIENT_MEMORY = -25,
+    FAILURE_TIMEOUT = -26,
+    FAILURE_HARDWARE_FAULT = -27
 };
 
 enum class PowerDomain : uint8_t {
-    CORE,
-    MEMORY,
-    ANALOG,
+    CORE_LOGIC,
+    MEMORY_SYSTEM,
+    ANALOG_SUBSYSTEM,
     COMMUNICATIONS,
-    TIMERS,
+    TIMERS_AND_PWM,
     GPIO,
+    SECURITY_MODULES,
     HIGH_SPEED_PERIPHERALS,
-    LOW_POWER_PERIPHERALS
+    LOW_POWER_PERIPHERALS,
+    MULTIMEDIA,
+    ALL
 };
 
 enum class PowerProfile : uint8_t {
@@ -101,257 +87,186 @@ enum class PowerProfile : uint8_t {
     DEEP_SLEEP_PREP,
     HIBERNATION_PREP,
     SHUTDOWN_PREP,
+    MACHINE_LEARNING_INFERENCE,
+    AUDIO_PROCESSING,
+    DATA_LOGGING_ACTIVE,
     CUSTOM_POLICY
 };
 
-enum class WakeupReason : uint8_t {
+enum class ResetReason : uint8_t {
     UNKNOWN,
     POWER_ON_RESET,
-    EXTERNAL_PIN_0,
-    EXTERNAL_PIN_1,
-    EXTERNAL_PIN_2,
-    EXTERNAL_PIN_3,
-    EXTERNAL_PIN_4,
-    EXTERNAL_PIN_5,
-    EXTERNAL_PIN_6,
-    EXTERNAL_PIN_7,
+    EXTERNAL_RESET_PIN,
+    SOFTWARE_RESET_USER,
+    SOFTWARE_RESET_EXCEPTION,
+    WATCHDOG_RESET,
+    BROWN_OUT_RESET,
+    LOCKUP_RESET,
+    CLOCK_FAILURE_SYSTEM,
+    CLOCK_FAILURE_WATCHDOG,
+    DEEP_SLEEP_HIBERNATE,
+    JTAG_DEBUG_RESET,
+    THERMAL_SHUTDOWN_RESET
+};
+
+enum class WakeupReason : uint16_t {
+    UNKNOWN,
+    POWER_ON_RESET,
+    EXTERNAL_PIN_0, EXTERNAL_PIN_1, EXTERNAL_PIN_2, EXTERNAL_PIN_3, EXTERNAL_PIN_4, EXTERNAL_PIN_5, EXTERNAL_PIN_6, EXTERNAL_PIN_7,
     EXTERNAL_PIN_MULTIPLE,
     RTC_ALARM_SECONDS,
     RTC_ALARM_DATE,
     WATCHDOG_TIMEOUT_SYSTEM_RESET,
     WATCHDOG_TIMEOUT_INTERRUPT,
     TOUCH_SENSOR_GLOBAL,
-    TOUCH_SENSOR_PAD_0,
-    TOUCH_SENSOR_PAD_1,
-    TOUCH_SENSOR_PAD_2,
-    UART_RX_ACTIVITY_0,
-    UART_RX_ACTIVITY_1,
-    UART_RX_ACTIVITY_2,
-    I2C_SLAVE_ADDR_MATCH_0,
-    I2C_SLAVE_ADDR_MATCH_1,
-    SPI_SLAVE_CS_LOW,
-    TIMER_COMPARE_MATCH_A,
-    TIMER_COMPARE_MATCH_B,
+    TOUCH_SENSOR_PAD_0, TOUCH_SENSOR_PAD_1, TOUCH_SENSOR_PAD_2, TOUCH_SENSOR_PAD_3, TOUCH_SENSOR_PAD_4, TOUCH_SENSOR_PAD_5,
+    UART_RX_ACTIVITY_0, UART_RX_ACTIVITY_1, UART_RX_ACTIVITY_2, UART_RX_ADDRESS_MATCH_0,
+    I2C_SLAVE_ADDR_MATCH_0, I2C_SLAVE_ADDR_MATCH_1, I2C_SLAVE_GENERAL_CALL,
+    SPI_SLAVE_CS_LOW, SPI_SLAVE_DATA_RECEIVED,
+    TIMER_COMPARE_MATCH_A, TIMER_COMPARE_MATCH_B, TIMER_OVERFLOW,
     ULP_COPROCESSOR,
-    BROWN_OUT_RESET_LEVEL1,
-    BROWN_OUT_RESET_LEVEL2,
-    SOFTWARE_RESET_USER,
-    SOFTWARE_RESET_EXCEPTION,
-    USB_ATTACH,
-    USB_ACTIVITY,
-    WIFI_ASSOCIATION,
-    WIFI_DEASSOCIATION,
-    WIFI_PATTERN_MATCH,
-    BLUETOOTH_LE_ADV,
-    BLUETOOTH_LE_CONNECTION,
-    BLUETOOTH_HCI_COMMAND,
-    NFC_FIELD_DETECTED,
-    NFC_READ_EVENT,
-    ANALOG_COMPARATOR_0_RISE,
-    ANALOG_COMPARATOR_0_FALL,
-    ANALOG_COMPARATOR_1_RISE,
-    ANALOG_COMPARATOR_1_FALL,
-    THERMAL_SHUTDOWN,
-    THERMAL_WARNING_HIGH,
-    VOLTAGE_GLITCH
+    BROWN_OUT_RESET_LEVEL1, BROWN_OUT_RESET_LEVEL2,
+    SOFTWARE_RESET_USER, SOFTWARE_RESET_EXCEPTION,
+    USB_ATTACH, USB_ACTIVITY, USB_RESUME,
+    WIFI_EVENT, WIFI_PATTERN_MATCH, WIFI_ASSOCIATION,
+    BLUETOOTH_LE_CONNECTION, BLUETOOTH_HCI_COMMAND, BLUETOOTH_SCAN_RESULT,
+    NFC_FIELD_DETECTED, NFC_READ_EVENT,
+    ANALOG_COMPARATOR_0_RISE, ANALOG_COMPARATOR_0_FALL, ANALOG_COMPARATOR_1_RISE, ANALOG_COMPARATOR_1_FALL,
+    ADC_WINDOW_OUTSIDE, ADC_CONVERSION_COMPLETE,
+    DMA_CHANNEL_0_COMPLETE, DMA_CHANNEL_1_COMPLETE, DMA_CHANNEL_2_COMPLETE, DMA_CHANNEL_3_COMPLETE, DMA_ERROR,
+    THERMAL_SHUTDOWN, THERMAL_WARNING_HIGH,
+    VOLTAGE_GLITCH,
+    SECURITY_TAMPER_DETECT,
+    CAN_BUS_MESSAGE_RX
+};
+
+enum class FlashState {
+    ACTIVE,
+    IDLE,
+    DEEP_POWER_DOWN,
+    UNKNOWN
 };
 
 enum class Peripheral : uint16_t {
     SYSTEM_CONTROLLER,
-    CPU_CORE_0,
-    CPU_CORE_1,
-    CPU_CORE_2,
-    CPU_CORE_3,
-    FPU_SINGLE_PRECISION,
-    FPU_DOUBLE_PRECISION,
-    DMA_CONTROLLER_0,
-    DMA_CONTROLLER_1,
-    DMA_CHANNEL_0,
-    DMA_CHANNEL_1,
-    DMA_CHANNEL_2,
-    DMA_CHANNEL_3,
-    DMA_CHANNEL_4,
-    DMA_CHANNEL_5,
-    DMA_CHANNEL_6,
-    DMA_CHANNEL_7,
-    CRC_UNIT_32BIT,
-    CRC_UNIT_16BIT,
-    FLASH_CONTROLLER,
-    FLASH_CACHE,
+    CPU_CORE_0, CPU_CORE_1, CPU_CORE_2, CPU_CORE_3,
+    FPU_SINGLE_PRECISION, FPU_DOUBLE_PRECISION,
+    DSP_INSTRUCTION_SET,
+    DMA_CONTROLLER_0, DMA_CONTROLLER_1,
+    DMA_CHANNEL_0, DMA_CHANNEL_1, DMA_CHANNEL_2, DMA_CHANNEL_3, DMA_CHANNEL_4, DMA_CHANNEL_5, DMA_CHANNEL_6, DMA_CHANNEL_7,
+    DMA_CHANNEL_8, DMA_CHANNEL_9, DMA_CHANNEL_10, DMA_CHANNEL_11, DMA_CHANNEL_12, DMA_CHANNEL_13, DMA_CHANNEL_14, DMA_CHANNEL_15,
+    CRC_UNIT_32BIT, CRC_UNIT_16BIT,
+    FLASH_CONTROLLER, FLASH_CACHE_INSTRUCTION, FLASH_CACHE_DATA,
     EEPROM_CONTROLLER,
-    SRAM_BANK_0,
-    SRAM_BANK_1,
-    SRAM_BANK_2,
-    SRAM_BANK_3,
-    SRAM_BANK_4,
-    SRAM_BANK_5,
-    SRAM_BANK_6,
-    SRAM_BANK_7,
-    RTC_INTERNAL,
-    RTC_EXTERNAL_PCF8523,
-    RTC_EXTERNAL_DS3231,
-    WATCHDOG_SYSTEM,
-    WATCHDOG_WINDOWED,
+    SRAM_BANK_0, SRAM_BANK_1, SRAM_BANK_2, SRAM_BANK_3, SRAM_BANK_4, SRAM_BANK_5, SRAM_BANK_6, SRAM_BANK_7,
+    SRAM_LOW_LEAKAGE, SRAM_RTC_MEMORY,
+    RTC_INTERNAL, RTC_EXTERNAL_PCF8523, RTC_EXTERNAL_DS3231,
+    WATCHDOG_SYSTEM, WATCHDOG_WINDOWED,
     BROWN_OUT_DETECTOR,
-    INTERNAL_TEMP_SENSOR,
-    INTERNAL_VOLTAGE_REF,
-    PLL_MAIN_SYSTEM,
-    PLL_USB,
-    PLL_AUDIO,
-    PLL_ETHERNET,
-    OSC_INTERNAL_RC_8MHZ,
-    OSC_INTERNAL_RC_48MHZ,
-    OSC_INTERNAL_RC_32KHZ,
-    OSC_EXTERNAL_CRYSTAL_HS,
-    OSC_EXTERNAL_CRYSTAL_LS,
-    OSC_EXTERNAL_BYPASS,
-    ADC_0_12BIT,
-    ADC_1_12BIT,
-    ADC_2_16BIT,
-    ADC_INTERNAL_TEMP,
-    ADC_INTERNAL_VREF,
-    DAC_0_8BIT,
-    DAC_1_12BIT,
-    ANALOG_COMPARATOR_0,
-    ANALOG_COMPARATOR_1,
-    ANALOG_COMPARATOR_2,
-    TIMER_0_8BIT_BASIC,
-    TIMER_1_16BIT_GENERAL,
-    TIMER_2_8BIT_ASYNC,
-    TIMER_3_16BIT_GENERAL,
-    TIMER_4_16BIT_GENERAL,
-    TIMER_5_16BIT_GENERAL,
-    TIMER_6_16BIT_ADVANCED,
-    TIMER_7_16BIT_ADVANCED,
-    TIMER_8_LOW_POWER,
-    I2C_0,
-    I2C_1,
-    I2C_2,
-    I2C_3_FAST_MODE_PLUS,
-    SPI_0,
-    SPI_1,
-    SPI_2,
-    SPI_3_QUAD,
-    UART_0,
-    UART_1,
-    UART_2,
-    UART_3,
-    UART_4,
+    INTERNAL_TEMP_SENSOR, INTERNAL_VOLTAGE_REF,
+    PLL_MAIN_SYSTEM, PLL_USB, PLL_AUDIO, PLL_ETHERNET, PLL_SAI, PLL_I2S,
+    OSC_INTERNAL_RC_8MHZ, OSC_INTERNAL_RC_48MHZ, OSC_INTERNAL_RC_32KHZ,
+    OSC_EXTERNAL_CRYSTAL_HS, OSC_EXTERNAL_CRYSTAL_LS, OSC_EXTERNAL_BYPASS,
+    ADC_0_12BIT, ADC_1_12BIT, ADC_2_16BIT, ADC_3_10BIT,
+    ADC_INTERNAL_TEMP, ADC_INTERNAL_VREF, ADC_INTERNAL_VBAT,
+    DAC_0_8BIT, DAC_1_12BIT,
+    ANALOG_COMPARATOR_0, ANALOG_COMPARATOR_1, ANALOG_COMPARATOR_2, ANALOG_COMPARATOR_3,
+    OPAMP_0, OPAMP_1, OPAMP_2,
+    TIMER_0_8BIT_BASIC, TIMER_1_16BIT_GENERAL, TIMER_2_8BIT_ASYNC, TIMER_3_16BIT_GENERAL,
+    TIMER_4_16BIT_GENERAL, TIMER_5_16BIT_GENERAL, TIMER_6_16BIT_ADVANCED, TIMER_7_16BIT_ADVANCED,
+    TIMER_8_LOW_POWER, TIMER_9_32BIT_GENERAL, TIMER_10_32BIT_GENERAL,
+    TIMER_11_HRTIM,
+    I2C_0, I2C_1, I2C_2, I2C_3_FAST_MODE_PLUS,
+    SPI_0, SPI_1, SPI_2, SPI_3_QUAD, SPI_4, SPI_5,
+    UART_0, UART_1, UART_2, UART_3, UART_4, UART_5, UART_6, UART_7,
     UART_LP_0,
-    USB_DEVICE,
-    USB_HOST,
-    USB_OTG_FS,
-    USB_OTG_HS,
-    SDIO_0,
-    SDIO_1,
-    ETHERNET_MAC,
-    ETHERNET_PHY_INTERNAL,
-    ETHERNET_PHY_EXTERNAL,
-    I2S_0_STD,
-    I2S_1_STD,
-    I2S_2_TDM,
-    PWM_MODULE_0,
-    PWM_MODULE_1,
-    PWM_MODULE_2_MOTOR_CONTROL,
-    QUADRATURE_ENCODER_0,
-    QUADRATURE_ENCODER_1,
+    USB_DEVICE, USB_HOST, USB_OTG_FS, USB_OTG_HS, USB_HS_PHY,
+    SDIO_0, SDIO_1,
+    ETHERNET_MAC, ETHERNET_PHY_INTERNAL, ETHERNET_PHY_EXTERNAL, ETHERNET_PTP,
+
+    I2S_0_STD, I2S_1_STD, I2S_2_TDM, I2S_3,
+    SAI_0, SAI_1,
+    PWM_MODULE_0, PWM_MODULE_1, PWM_MODULE_2_MOTOR_CONTROL,
+    QUADRATURE_ENCODER_0, QUADRATURE_ENCODER_1,
+    HALL_SENSOR_INTERFACE,
     TOUCH_SENSOR_UNIT,
-    TOUCH_PAD_0,
-    TOUCH_PAD_1,
-    TOUCH_PAD_2,
-    TOUCH_PAD_3,
-    TOUCH_PAD_4,
-    TOUCH_PAD_5,
-    TOUCH_PAD_6,
-    TOUCH_PAD_7,
+    TOUCH_PAD_0, TOUCH_PAD_1, TOUCH_PAD_2, TOUCH_PAD_3, TOUCH_PAD_4, TOUCH_PAD_5, TOUCH_PAD_6, TOUCH_PAD_7,
     ULP_COPROCESSOR,
-    GPIO_PORT_A,
-    GPIO_PORT_B,
-    GPIO_PORT_C,
-    GPIO_PORT_D,
-    GPIO_PORT_E,
-    GPIO_PORT_F,
-    GPIO_PORT_G,
-    GPIO_PORT_H,
-    GPIO_PORT_I,
-    GPIO_PORT_J,
-    GPIO_PORT_K,
-    AES_ACCELERATOR_128,
-    AES_ACCELERATOR_256,
-    SHA_ACCELERATOR_256,
-    SHA_ACCELERATOR_512,
-    TRNG_UNIT,
-    PKA_UNIT,
-    CAN_BUS_0,
-    CAN_BUS_1,
-    CAN_BUS_FD,
+    GPIO_PORT_A, GPIO_PORT_B, GPIO_PORT_C, GPIO_PORT_D, GPIO_PORT_E, GPIO_PORT_F, GPIO_PORT_G, GPIO_PORT_H, GPIO_PORT_I, GPIO_PORT_J, GPIO_PORT_K,
+    AES_ACCELERATOR_128, AES_ACCELERATOR_256,
+    SHA_ACCELERATOR_256, SHA_ACCELERATOR_512,
+    TRNG_UNIT, PKA_UNIT,
+    CAN_BUS_0, CAN_BUS_1, CAN_BUS_FD,
     LIN_BUS_0,
-    WIFI_MAC_2_4GHZ,
-    WIFI_PHY_2_4GHZ,
-    BLUETOOTH_LE_PHY,
-    BLUETOOTH_CLASSIC_PHY,
-    BLUETOOTH_CONTROLLER,
+    WIFI_MAC_2_4GHZ, WIFI_PHY_2_4GHZ,
+    BLUETOOTH_LE_PHY, BLUETOOTH_CLASSIC_PHY, BLUETOOTH_CONTROLLER,
     RADIO_802_15_4,
-    NFC_CONTROLLER_TYPE_A,
-    NFC_CONTROLLER_TYPE_F,
-    LCD_CONTROLLER_PARALLEL,
-    LCD_CONTROLLER_SPI,
+    NFC_CONTROLLER_TYPE_A, NFC_CONTROLLER_TYPE_F,
+    LCD_CONTROLLER_PARALLEL, LCD_CONTROLLER_SPI,
+    MIPI_DSI_INTERFACE,
     CAMERA_INTERFACE_DCMI,
+    JPEG_CODEC,
     PSEUDO_PERIPHERAL_SERIAL_PRINT,
     PSEUDO_PERIPHERAL_ARDUINO_MILLIS,
     PERIPHERAL_COUNT
 };
 
 struct ExternalInterruptConfig {
-    uint64_t pinMask;
-    int triggerMode;
-    uint32_t debounceMicros;
+    uint64_t pinMask = 0;
+    int triggerMode = 0;
+    uint32_t debounceMicros = 0;
 };
 
 struct RtcConfig {
-    uint32_t timeoutSeconds;
-    uint8_t alarmHour;
-    uint8_t alarmMinute;
-    uint8_t alarmSecond;
-    bool matchDate;
-    uint8_t alarmDay;
-    uint8_t alarmMonth;
+    uint32_t timeoutSeconds = 0;
+    uint8_t alarmHour = 0, alarmMinute = 0, alarmSecond = 0;
+    bool matchDate = false;
+    uint8_t alarmDay = 0, alarmMonth = 0;
 };
 
 struct WatchdogConfig {
-    uint32_t timeoutMillis;
-    bool generateInterrupt;
-    bool windowedMode;
-    uint8_t windowPercent;
+    uint32_t timeoutMillis = 0;
+    bool generateInterrupt = true;
+    bool windowedMode = false;
+    uint8_t windowPercent = 50;
 };
 
-struct ThermalConfig {
-    float warningTempCelsius;
-    float shutdownTempCelsius;
+struct UartWakeupConfig {
+    uint8_t portIndex = 0;
+    bool wakeupOnStartBit = true;
+    bool wakeupOnAddressMatch = false;
+    uint8_t address = 0;
 };
 
-struct VoltageConfig {
-    float warningVoltage;
-    float shutdownVoltage;
+struct ThermalPolicy {
+    bool enabled = false;
+    float warningTempCelsius = 85.0;
+    float shutdownTempCelsius = 105.0;
+};
+
+struct VoltagePolicy {
+    bool enabled = false;
+    float warningVoltage = 2.8;
+    float shutdownVoltage = 2.5;
 };
 
 struct WakeupPolicy {
     ExternalInterruptConfig extInterrupt;
     RtcConfig rtc;
     WatchdogConfig wdt;
-    uint32_t touchThreshold;
-    uint8_t uartPortIndex;
-    bool enableUlpWakeup;
-    bool enableWifiWakeup;
-    bool enableBluetoothWakeup;
-    bool enableAnalogComparatorWakeup;
+    UartWakeupConfig uartWakeup;
+    uint32_t touchThreshold = 0;
+    bool enableUlpWakeup = false;
+    bool enableWifiWakeup = false;
+    bool enableBluetoothWakeup = false;
+    bool enableAnalogComparatorWakeup = false;
 };
 
 struct PowerPolicy {
-    uint32_t cpuFrequencyHz;
-    bool flashDeepPowerDown;
-    int8_t voltageScaleLevel;
-    uint64_t peripheralMask[4];
+    uint32_t cpuFrequencyHz = 0;
+    bool flashDeepPowerDown = false;
+    int8_t voltageScaleLevel = 0;
+    uint64_t peripheralMask[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 };
 
 typedef void (*ChronosCallback)(WakeupReason reason);
@@ -364,22 +279,23 @@ public:
     Status setProfile(PowerProfile profile);
     PowerProfile getProfile() const;
 
-    Status setCustomPolicy(const PowerPolicy& policy);
-    Status getCustomPolicy(PowerPolicy& policy) const;
-    
-    Status setCpuFrequency(uint32_t frequencyHz);
-    uint32_t getCpuFrequency() const;
-
     Status sleep(const WakeupPolicy& policy);
     [[noreturn]] void hibernate(const WakeupPolicy& policy);
     [[noreturn]] void shutdown();
 
+    Status setCpuFrequency(uint32_t frequencyHz);
+    uint32_t getCpuFrequency() const;
     Status control(Peripheral p, bool enable);
     Status massControl(const uint64_t masks[], uint8_t maskCount, bool enable);
+    Status setClockGatingForDomain(PowerDomain domain, bool enable);
+
+    Status setCustomPolicy(const PowerPolicy& policy);
+    Status getCustomPolicy(PowerPolicy& policy) const;
 
     Status registerEventCallback(ChronosCallback callback);
     
     WakeupReason getWakeupReason();
+    ResetReason getResetReason();
     void clearWakeupReason();
 
     uint32_t getSleepDurationMillis() const;
@@ -387,6 +303,7 @@ public:
     
     Status getInternalTemperature(float& temp);
     Status getCoreVoltage(float& voltage);
+    Status getFlashState(FlashState& state);
     Status getPeripheralClock(Peripheral p, uint32_t& frequencyHz);
 
     Status calibrateInternalOscillator(SystemClockSource osc, uint32_t referenceFreq);
@@ -401,9 +318,11 @@ private:
     void platform_sleep(const WakeupPolicy& policy);
     void platform_hibernate(const WakeupPolicy& policy);
     WakeupReason platform_getWakeupReason();
+    ResetReason platform_getResetReason();
     Status platform_getInternalTemperature(float& temp);
     Status platform_getCoreVoltage(float& voltage);
     void platform_synchronizeSystemTime(uint32_t sleepMillis);
+    Status platform_getFlashState(FlashState& state);
 
     PowerProfile m_currentProfile;
     PowerPolicy m_customPolicy;
